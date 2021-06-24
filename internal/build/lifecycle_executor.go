@@ -21,6 +21,8 @@ var (
 	SupportedPlatformAPIVersions = builder.APISet{
 		api.MustParse("0.3"),
 		api.MustParse("0.4"),
+		api.MustParse("0.5"),
+		api.MustParse("0.6"),
 	}
 )
 
@@ -69,6 +71,7 @@ type LifecycleOptions struct {
 	DefaultProcessType string
 	FileFilter         func(string) bool
 	Workspace          string
+	GID                int
 }
 
 func NewLifecycleExecutor(logger logging.Logger, docker client.CommonAPIClient) *LifecycleExecutor {

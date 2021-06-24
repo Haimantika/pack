@@ -25,14 +25,15 @@ import (
 type ContainerOperation func(ctrClient client.CommonAPIClient, ctx context.Context, containerID string, stdout, stderr io.Writer) error
 
 // CopyDir copies a local directory (src) to the destination on the container while filtering files and changing it's UID/GID.
-func CopyDir(src, dst string, uid, gid int, os string, fileFilter func(string) bool) ContainerOperation {
+// if includeRoot is set the UID/GID will be set on the dst directory.
+func CopyDir(src, dst string, uid, gid int, os string, includeRoot bool, fileFilter func(string) bool) ContainerOperation {
 	return func(ctrClient client.CommonAPIClient, ctx context.Context, containerID string, stdout, stderr io.Writer) error {
 		tarPath := dst
 		if os == "windows" {
 			tarPath = paths.WindowsToSlash(dst)
 		}
 
-		reader, err := createReader(src, tarPath, uid, gid, fileFilter)
+		reader, err := createReader(src, tarPath, uid, gid, includeRoot, fileFilter)
 		if err != nil {
 			return errors.Wrapf(err, "create tar archive from '%s'", src)
 		}
@@ -92,7 +93,7 @@ func copyDirWindows(ctx context.Context, ctrClient client.CommonAPIClient, conta
 				"cmd",
 				"/c",
 
-				//xcopy args
+				// xcopy args
 				// e - recursively create subdirectories
 				// h - copy hidden and system files
 				// b - copy symlinks, do not dereference
@@ -166,7 +167,7 @@ func WriteStackToml(dstPath string, stack builder.StackMetadata, os string) Cont
 	}
 }
 
-func createReader(src, dst string, uid, gid int, fileFilter func(string) bool) (io.ReadCloser, error) {
+func createReader(src, dst string, uid, gid int, includeRoot bool, fileFilter func(string) bool) (io.ReadCloser, error) {
 	fi, err := os.Stat(src)
 	if err != nil {
 		return nil, err
@@ -178,16 +179,16 @@ func createReader(src, dst string, uid, gid int, fileFilter func(string) bool) (
 			mode = 0777
 		}
 
-		return archive.ReadDirAsTar(src, dst, uid, gid, mode, false, fileFilter), nil
+		return archive.ReadDirAsTar(src, dst, uid, gid, mode, false, includeRoot, fileFilter), nil
 	}
 
 	return archive.ReadZipAsTar(src, dst, uid, gid, -1, false, fileFilter), nil
 }
 
-//EnsureVolumeAccess grants full access permissions to volumes for UID/GID-based user
-//When UID/GID are 0 it grants explicit full access to BUILTIN\Administrators and any other UID/GID grants full access to BUILTIN\Users
-//Changing permissions on volumes through stopped containers does not work on Docker for Windows so we start the container and make change using icacls
-//See: https://github.com/moby/moby/issues/40771
+// EnsureVolumeAccess grants full access permissions to volumes for UID/GID-based user
+// When UID/GID are 0 it grants explicit full access to BUILTIN\Administrators and any other UID/GID grants full access to BUILTIN\Users
+// Changing permissions on volumes through stopped containers does not work on Docker for Windows so we start the container and make change using icacls
+// See: https://github.com/moby/moby/issues/40771
 func EnsureVolumeAccess(uid, gid int, os string, volumeNames ...string) ContainerOperation {
 	return func(ctrClient client.CommonAPIClient, ctx context.Context, containerID string, stdout, stderr io.Writer) error {
 		if os != "windows" {
@@ -209,7 +210,7 @@ func EnsureVolumeAccess(uid, gid int, os string, volumeNames ...string) Containe
 				cmd += "&&"
 			}
 
-			//icacls args
+			// icacls args
 			// /grant - add new permissions instead of replacing
 			// (OI) - object inherit
 			// (CI) - container inherit

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strconv"
 
 	"github.com/buildpacks/lifecycle/api"
 	"github.com/buildpacks/lifecycle/auth"
@@ -21,6 +22,7 @@ import (
 
 const (
 	defaultProcessType = "web"
+	overrideGID        = 0
 )
 
 type LifecycleExecution struct {
@@ -173,12 +175,17 @@ func (l *LifecycleExecution) Cleanup() error {
 
 func (l *LifecycleExecution) Create(ctx context.Context, publish bool, dockerHost string, clearCache bool, runImage, repoName, networkMode string, buildCache, launchCache Cache, additionalTags, volumes []string, phaseFactory PhaseFactory) error {
 	flags := addTags([]string{
+		"-app", l.mountPaths.appDir(),
 		"-cache-dir", l.mountPaths.cacheDir(),
 		"-run-image", runImage,
 	}, additionalTags)
 
 	if clearCache {
 		flags = append(flags, "-skip-restore")
+	}
+
+	if l.opts.GID >= overrideGID {
+		flags = append(flags, "-gid", strconv.Itoa(l.opts.GID))
 	}
 
 	processType := determineDefaultProcessType(l.platformAPI, l.opts.DefaultProcessType)
@@ -200,7 +207,7 @@ func (l *LifecycleExecution) Create(ctx context.Context, publish bool, dockerHos
 		WithArgs(repoName),
 		WithNetwork(networkMode),
 		cacheOpts,
-		WithContainerOperations(CopyDir(l.opts.AppPath, l.mountPaths.appDir(), l.opts.Builder.UID(), l.opts.Builder.GID(), l.os, l.opts.FileFilter)),
+		WithContainerOperations(CopyDir(l.opts.AppPath, l.mountPaths.appDir(), l.opts.Builder.UID(), l.opts.Builder.GID(), l.os, true, l.opts.FileFilter)),
 	}
 
 	if publish {
@@ -224,6 +231,7 @@ func (l *LifecycleExecution) Create(ctx context.Context, publish bool, dockerHos
 }
 
 func (l *LifecycleExecution) Detect(ctx context.Context, networkMode string, volumes []string, phaseFactory PhaseFactory) error {
+	flags := []string{"-app", l.mountPaths.appDir()}
 	configProvider := NewPhaseConfigProvider(
 		"detector",
 		l,
@@ -235,8 +243,9 @@ func (l *LifecycleExecution) Detect(ctx context.Context, networkMode string, vol
 		WithBinds(volumes...),
 		WithContainerOperations(
 			EnsureVolumeAccess(l.opts.Builder.UID(), l.opts.Builder.GID(), l.os, l.layersVolume, l.appVolume),
-			CopyDir(l.opts.AppPath, l.mountPaths.appDir(), l.opts.Builder.UID(), l.opts.Builder.GID(), l.os, l.opts.FileFilter),
+			CopyDir(l.opts.AppPath, l.mountPaths.appDir(), l.opts.Builder.UID(), l.opts.Builder.GID(), l.os, true, l.opts.FileFilter),
 		),
+		WithFlags(flags...),
 	)
 
 	detect := phaseFactory.New(configProvider)
@@ -252,6 +261,9 @@ func (l *LifecycleExecution) Restore(ctx context.Context, networkMode string, bu
 		flagsOpt = WithFlags("-cache-image", buildCache.Name())
 	case cache.Volume:
 		cacheOpt = WithBinds(fmt.Sprintf("%s:%s", buildCache.Name(), l.mountPaths.cacheDir()))
+	}
+	if l.opts.GID >= overrideGID {
+		flagsOpt = WithFlags("-gid", strconv.Itoa(l.opts.GID))
 	}
 
 	configProvider := NewPhaseConfigProvider(
@@ -306,6 +318,10 @@ func (l *LifecycleExecution) newAnalyze(repoName, networkMode string, publish bo
 		cacheOpt = WithBinds(fmt.Sprintf("%s:%s", buildCache.Name(), l.mountPaths.cacheDir()))
 	}
 
+	if l.opts.GID >= overrideGID {
+		flagsOpt = WithFlags("-gid", strconv.Itoa(l.opts.GID))
+	}
+
 	if publish {
 		authConfig, err := auth.BuildEnvVar(authn.DefaultKeychain, repoName)
 		if err != nil {
@@ -357,6 +373,7 @@ func (l *LifecycleExecution) newAnalyze(repoName, networkMode string, publish bo
 }
 
 func (l *LifecycleExecution) Build(ctx context.Context, networkMode string, volumes []string, phaseFactory PhaseFactory) error {
+	flags := []string{"-app", l.mountPaths.appDir()}
 	configProvider := NewPhaseConfigProvider(
 		"builder",
 		l,
@@ -364,6 +381,7 @@ func (l *LifecycleExecution) Build(ctx context.Context, networkMode string, volu
 		WithArgs(l.withLogLevel()...),
 		WithNetwork(networkMode),
 		WithBinds(volumes...),
+		WithFlags(flags...),
 	)
 
 	build := phaseFactory.New(configProvider)
@@ -372,7 +390,8 @@ func (l *LifecycleExecution) Build(ctx context.Context, networkMode string, volu
 }
 
 func determineDefaultProcessType(platformAPI *api.Version, providedValue string) string {
-	shouldSetForceDefault := platformAPI.Compare(api.MustParse("0.4")) >= 0
+	shouldSetForceDefault := platformAPI.Compare(api.MustParse("0.4")) >= 0 &&
+		platformAPI.Compare(api.MustParse("0.6")) < 0
 	if providedValue == "" && shouldSetForceDefault {
 		return defaultProcessType
 	}
@@ -382,6 +401,7 @@ func determineDefaultProcessType(platformAPI *api.Version, providedValue string)
 
 func (l *LifecycleExecution) newExport(repoName, runImage string, publish bool, dockerHost, networkMode string, buildCache, launchCache Cache, additionalTags []string, phaseFactory PhaseFactory) (RunnerCleaner, error) {
 	flags := []string{
+		"-app", l.mountPaths.appDir(),
 		"-cache-dir", l.mountPaths.cacheDir(),
 		"-stack", l.mountPaths.stackPath(),
 		"-run-image", runImage,
@@ -390,6 +410,9 @@ func (l *LifecycleExecution) newExport(repoName, runImage string, publish bool, 
 	processType := determineDefaultProcessType(l.platformAPI, l.opts.DefaultProcessType)
 	if processType != "" {
 		flags = append(flags, "-process-type", processType)
+	}
+	if l.opts.GID >= overrideGID {
+		flags = append(flags, "-gid", strconv.Itoa(l.opts.GID))
 	}
 
 	cacheOpt := NullOp()

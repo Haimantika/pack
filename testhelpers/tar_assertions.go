@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ type TarEntryAssertion func(t *testing.T, header *tar.Header, data []byte)
 func AssertOnTarEntry(t *testing.T, tarPath, entryPath string, assertFns ...TarEntryAssertion) {
 	t.Helper()
 
-	tarFile, err := os.Open(tarPath)
+	tarFile, err := os.Open(filepath.Clean(tarPath))
 	AssertNil(t, err)
 	defer tarFile.Close()
 
@@ -81,7 +82,7 @@ func isGzipped(reader io.Reader) (headerBytes []byte, isGzipped bool, err error)
 		return magicHeader, false, err
 	}
 	// This assertion is based on https://stackoverflow.com/a/28332019. It checks whether the two header bytes of
-	//the file match the expected headers for a gzip file; the first one is 0x1f and the second is 0x8b
+	// the file match the expected headers for a gzip file; the first one is 0x1f and the second is 0x8b
 	return magicHeader, bytes.Equal(magicHeader, gzipMagicHeader), nil
 }
 
