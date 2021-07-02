@@ -28,6 +28,7 @@ import (
 	"github.com/buildpacks/pack/internal/buildpackage"
 	internalConfig "github.com/buildpacks/pack/internal/config"
 	"github.com/buildpacks/pack/internal/dist"
+	"github.com/buildpacks/pack/internal/image"
 	"github.com/buildpacks/pack/internal/layer"
 	"github.com/buildpacks/pack/internal/paths"
 	"github.com/buildpacks/pack/internal/stack"
@@ -213,7 +214,7 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions) error {
 		return errors.Wrapf(err, "invalid builder '%s'", opts.Builder)
 	}
 
-	rawBuilderImage, err := c.imageFetcher.Fetch(ctx, builderRef.Name(), true, opts.PullPolicy)
+	rawBuilderImage, err := c.imageFetcher.Fetch(ctx, builderRef.Name(), image.FetchOptions{Daemon: true, PullPolicy: opts.PullPolicy})
 	if err != nil {
 		return errors.Wrapf(err, "failed to fetch builder image '%s'", builderRef.Name())
 	}
@@ -333,11 +334,16 @@ func (c *Client) Build(ctx context.Context, opts BuildOptions) error {
 			if lifecycleImageName == "" {
 				lifecycleImageName = fmt.Sprintf("%s:%s", internalConfig.DefaultLifecycleImageRepo, lifecycleVersion.String())
 			}
+
+			imgArch, err := rawBuilderImage.Architecture()
+			if err != nil {
+				return errors.Wrapf(err, "getting builder architecture")
+			}
+
 			lifecycleImage, err := c.imageFetcher.Fetch(
 				ctx,
 				lifecycleImageName,
-				true,
-				opts.PullPolicy,
+				image.FetchOptions{Daemon: true, PullPolicy: opts.PullPolicy, Platform: fmt.Sprintf("%s/%s", imgOS, imgArch)},
 			)
 			if err != nil {
 				return errors.Wrap(err, "fetching lifecycle image")
@@ -424,7 +430,7 @@ func (c *Client) validateRunImage(context context.Context, name string, pullPoli
 	if name == "" {
 		return nil, errors.New("run image must be specified")
 	}
-	img, err := c.imageFetcher.Fetch(context, name, !publish, pullPolicy)
+	img, err := c.imageFetcher.Fetch(context, name, image.FetchOptions{Daemon: !publish, PullPolicy: pullPolicy})
 	if err != nil {
 		return nil, err
 	}
@@ -876,7 +882,7 @@ func (c *Client) logImageNameAndSha(ctx context.Context, publish bool, imageRef 
 		return nil
 	}
 
-	img, err := c.imageFetcher.Fetch(ctx, imageRef.Name(), !publish, config.PullNever)
+	img, err := c.imageFetcher.Fetch(ctx, imageRef.Name(), image.FetchOptions{Daemon: !publish, PullPolicy: config.PullNever})
 	if err != nil {
 		return errors.Wrap(err, "fetching built image")
 	}
